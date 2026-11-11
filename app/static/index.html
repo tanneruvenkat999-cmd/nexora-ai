@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NEXORA AI · Software Agency</title>
+<style>
+:root{font-family:Inter,system-ui,sans-serif;color:#eaf1ff;background:#0b1120}
+body{max-width:1120px;margin:auto;padding:24px}header{display:flex;justify-content:space-between;align-items:center}
+h1{color:#8fcaff}section{background:#151e30;border:1px solid #293850;border-radius:14px;padding:20px;margin:18px 0}
+input,textarea,select,button{font:inherit;padding:10px;border-radius:8px;border:1px solid #3d506e;background:#0b1526;color:white;margin:4px 0}
+input,textarea,select{box-sizing:border-box;width:100%}button{background:#2463cc;cursor:pointer}button:disabled{opacity:.5}
+textarea{min-height:90px}article{border-top:1px solid #33415a;padding:12px 0}
+small{color:#b2c1d9}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#0a1323;padding:14px;border-radius:8px}
+#error{color:#ffb0b0}#notice{color:#a8f2bc}.hidden{display:none}label{display:block;margin-top:10px}code{color:#a7d5ff}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px}
+</style></head><body>
+<header><h1>◈ NEXORA AI</h1><button onclick="logout()">Log out</button></header>
+<p>15 specialized AI roles · Administrator approval before execution · Client-isolated projects</p>
+<p id="error" role="alert"></p><p id="notice" role="status"></p>
+<section id="loginBox"><h2>Sign in</h2><form id="loginForm">
+<label>Email<input id="email" type="email" required autocomplete="username"></label>
+<label>Password<input id="password" type="password" required autocomplete="current-password"></label>
+<button>Sign in</button></form></section>
+<main id="workspace" class="hidden">
+<div class="grid">
+<section><h2>Projects</h2><form id="projectForm">
+<label>Name<input id="projectName" required minlength="2"></label>
+<label>Project brief<textarea id="projectBrief" required minlength="10"></textarea></label>
+<label id="ownerLabel" class="hidden">Client owner ID (optional)<input id="ownerId" type="number" min="1"></label>
+<button>Create project</button></form><div id="projects"></div></section>
+<section id="clientSection" class="hidden"><h2>Client management</h2><form id="clientForm">
+<label>Client email<input id="clientEmail" type="email" required></label>
+<label>Temporary password (12+ characters)<input id="clientPassword" type="password" minlength="12" required></label>
+<button>Create client</button></form><div id="clients"></div></section>
+</div>
+<section><h2>Agent tasks</h2><label>Project<select id="projectSelect"></select></label>
+<form id="taskForm"><label>Specialist<select id="agentSelect"></select></label>
+<label>Task instruction<textarea id="instruction" minlength="10" required></textarea></label>
+<button>Submit for approval</button></form><button onclick="safe(refreshTasks)">Refresh tasks</button>
+<div id="tasks"></div></section>
+</main>
+<script>
+let token='',role='',agents=[],projects=[];
+const el=id=>document.getElementById(id);
+function msg(text,bad=false){el(bad?'error':'notice').textContent=text;el(bad?'notice':'error').textContent=''}
+async function api(path,method='GET',body){const res=await fetch(path,{method,headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});const data=await res.json();if(!res.ok)throw Error(typeof data.detail==='string'?data.detail:JSON.stringify(data.detail));return data}
+function node(tag,text){const n=document.createElement(tag);n.textContent=text;return n}
+function logout(){token='';role='';el('workspace').classList.add('hidden');el('loginBox').classList.remove('hidden');msg('Signed out')}
+async function safe(fn){try{await fn()}catch(e){msg(e.message,true)}}
+el('loginForm').onsubmit=e=>{e.preventDefault();safe(async()=>{
+const r=await api('/auth/login','POST',{email:el('email').value,password:el('password').value});
+token=r.access_token;role=r.role;el('password').value='';
+el('loginBox').classList.add('hidden');el('workspace').classList.remove('hidden');
+el('clientSection').classList.toggle('hidden',role!=='admin');el('ownerLabel').classList.toggle('hidden',role!=='admin');
+agents=await api('/agents');el('agentSelect').replaceChildren(...agents.map(a=>{const n=node('option',a.id.replaceAll('_',' '));n.value=a.id;return n}));
+await refreshProjects();if(role==='admin')await refreshClients();msg('Signed in')})};
+async function refreshProjects(){projects=await api('/projects');
+el('projects').replaceChildren(...projects.map(p=>node('article',`#${p.id} — ${p.name} (owner ${p.owner_id})`)));
+el('projectSelect').replaceChildren(...projects.map(p=>{const n=node('option',p.name);n.value=p.id;return n}));await refreshTasks()}
+el('projectForm').onsubmit=e=>{e.preventDefault();safe(async()=>{
+const body={name:el('projectName').value,brief:el('projectBrief').value};
+if(role==='admin'&&el('ownerId').value)body.owner_id=Number(el('ownerId').value);
+await api('/projects','POST',body);e.target.reset();await refreshProjects();msg('Project created')})};
+el('clientForm').onsubmit=e=>{e.preventDefault();safe(async()=>{
+await api('/clients','POST',{email:el('clientEmail').value,password:el('clientPassword').value});
+e.target.reset();await refreshClients();msg('Client created')})};
+async function refreshClients(){const c=await api('/clients');el('clients').replaceChildren(...c.map(x=>node('article',`#${x.id} — ${x.email}`)))}
+el('taskForm').onsubmit=e=>{e.preventDefault();safe(async()=>{
+if(!el('projectSelect').value)throw Error('Create a project first');
+await api(`/projects/${el('projectSelect').value}/tasks`,'POST',{agent:el('agentSelect').value,instruction:el('instruction').value});
+el('instruction').value='';await refreshTasks();msg('Task submitted for approval')})};
+el('projectSelect').onchange=()=>safe(refreshTasks);
+async function action(id,kind){await safe(async()=>{await api(`/tasks/${id}/${kind}`,'POST');await refreshTasks();msg(`Task ${kind} request completed`)})}
+async function refreshTasks(){const id=el('projectSelect').value;if(!id){el('tasks').replaceChildren();return}
+const tasks=await api(`/projects/${id}/tasks`);
+el('tasks').replaceChildren(...tasks.map(t=>{const box=node('article','');
+box.append(node('strong',`#${t.id} ${t.agent} — ${t.status}`),node('p',t.instruction));
+if(t.output)box.append(node('pre',t.output));if(t.error)box.append(node('pre',t.error));
+if(role==='admin'){const actions=t.status==='pending_approval'?['approve','reject']:t.status==='approved'?['execute']:[];
+actions.forEach(k=>{const b=node('button',k);b.onclick=()=>action(t.id,k);box.append(b)})}return box}))}
+</script></body></html>
